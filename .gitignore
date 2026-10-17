@@ -18,6 +18,10 @@ frontend/tsconfig.tsbuildinfo
 # Docker
 *.log
 
+# Runtime (chạy local ngoài compose)
+backend/run.err
+backend/run.pid
+
 # OS
 .DS_Store
 Thumbs.db

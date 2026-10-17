@@ -1,0 +1,41 @@
+# Argo CD Application — GitOps Task Manager
+#
+# Cài đặt (một lần):
+#   kubectl apply -f deploy/argocd/application.yaml
+#
+# Sau đó CI pipeline sẽ commit image tag mới vào deploy/kubernetes/,
+# Argo CD tự phát hiện OutOfSync và sync (hoặc bật Auto-Sync).
+#
+# LƯU Ý:
+# - prune được TẮT (false) để tránh xóa nhầm tài nguyên ngoài phạm vi.
+# - selfHeal tắt: nếu người dùng can thiệp bằng tay, Argo CD sẽ báo
+#   OutOfSync thay vì ghi đè ngay — an toàn cho demo/bảo vệ.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitops-task-manager
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/latp1102/Mo_HiNH_GITOPS.git
+    targetRevision: main
+    path: deploy/kubernetes
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitops-demo
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=false   # namespace đã được tạo sẵn qua namespace.yaml
+      - ApplyOutOfSyncOnly=true # chỉ apply phần lệch, giảm nhiễu log
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

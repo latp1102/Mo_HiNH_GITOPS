@@ -24,7 +24,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/CHANGE_ME/CHANGE_ME-frontend:PLACEHOLDER
+          image: ghcr.io/latp1102/mo_hinh_gitops-frontend:PLACEHOLDER
           ports:
             - name: http
               containerPort: 80

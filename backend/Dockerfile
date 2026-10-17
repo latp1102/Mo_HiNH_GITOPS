@@ -19,9 +19,9 @@ COPY --from=builder /app/build/libs/app.jar app.jar
 
 ENV APP_VERSION=1.0.0 \
     JAVA_OPTS="-Xms128m -Xmx256m"
-EXPOSE 9090
+EXPOSE 8080
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
-  CMD wget -qO- http://localhost:9090/api/health || exit 1
+  CMD wget -qO- http://127.0.0.1:8080/api/health || exit 1
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
