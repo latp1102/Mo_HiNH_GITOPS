@@ -1,0 +1,154 @@
+name: CI/CD GitOps Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ========== JOB 1: Unit test Backend ==========
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Run Backend unit tests
+        working-directory: backend
+        run: ./gradlew test --console=plain
+
+  # ========== JOB 2: Test + Build Frontend ==========
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run Frontend unit tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Build Frontend
+        working-directory: frontend
+        run: npm run build
+
+  # ========== JOB 3: Build Docker images + push GHCR (chỉ main push) ==========
+  build-push:
+    needs: [test-backend, test-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend-image: ${{ steps.meta.outputs.backend-image }}
+      frontend-image: ${{ steps.meta.outputs.frontend-image }}
+      short-sha: ${{ steps.meta.outputs.short-sha }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Generate image metadata
+        id: meta
+        run: |
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          SHA12="${GITHUB_SHA:0:12}"
+          echo "backend-image=${REGISTRY}/${REPO_LC}-backend" >> "$GITHUB_OUTPUT"
+          echo "frontend-image=${REGISTRY}/${REPO_LC}-frontend" >> "$GITHUB_OUTPUT"
+          echo "short-sha=${SHA12}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.backend-image }}:${{ steps.meta.outputs.short-sha }}
+            ${{ steps.meta.outputs.backend-image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.frontend-image }}:${{ steps.meta.outputs.short-sha }}
+            ${{ steps.meta.outputs.frontend-image }}:latest
+          build-args: |
+            VITE_APP_VERSION=${{ steps.meta.outputs.short-sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ========== JOB 4: Cập nhật image tag trong GitOps manifests ==========
+  update-gitops:
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Bump image tags in Kubernetes manifests
+        run: |
+          SHA12="${{ needs.build-push.outputs.short-sha }}"
+          BACKEND="${{ needs.build-push.outputs.backend-image }}"
+          FRONTEND="${{ needs.build-push.outputs.frontend-image }}"
+          echo "Bumping to backend=${BACKEND}:${SHA12} frontend=${FRONTEND}:${SHA12}"
+          sed -i "s|image:.*-backend:.*|image: ${BACKEND}:${SHA12}|" deploy/kubernetes/backend-deployment.yaml
+          sed -i "s|image:.*-frontend:.*|image: ${FRONTEND}:${SHA12}|" deploy/kubernetes/frontend-deployment.yaml
+
+      - name: Commit and push manifest update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/kubernetes/
+          if git diff --staged --quiet; then
+            echo "Manifests already up to date — bỏ qua commit."
+          else
+            git commit -m "chore: bump images to ${{ needs.build-push.outputs.short-sha }} [skip ci]"
+            git push
+          fi
