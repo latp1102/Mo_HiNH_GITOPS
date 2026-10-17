@@ -1,0 +1,6 @@
+server:
+  port: 9090
+
+app:
+  version: "1.0.0"
+  message: "GitOps Task Manager v1.0.0"
